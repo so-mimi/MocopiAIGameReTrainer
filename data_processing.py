@@ -6,8 +6,9 @@ from tensorflow import keras
 import tf2onnx
 import onnx
 import os
-
+import asyncio
 import config
+from functools import partial
 
 # タイムワーピング関数
 def time_warping(data, alpha=0.01):
@@ -24,6 +25,28 @@ def time_warping(data, alpha=0.01):
         new_data = new_data[:data.shape[0]]
     return new_data
 
+def generate_time_warped_data(base_data, num_samples=600):
+    time_data_list = []
+    for _ in range(num_samples):
+        num_rows = base_data.shape[0]
+        random_row_index = np.random.randint(num_rows)
+        selected_row = base_data.iloc[random_row_index]
+
+        # 前半の2610要素を取り出して87x30にリシェイプ
+        selected_data = selected_row.values[:2610].reshape(30, 87)
+        # タイムワーピング適用
+        warped_data = time_warping(selected_data).reshape(-1)
+        
+        # 残りの要素と結合
+        remaining_data = selected_row.values[2610:]
+        combined_data = np.concatenate([warped_data, remaining_data])
+        
+        time_data_list.append(combined_data)
+
+    column_names = [f'col{i}' for i in range(1, base_data.shape[1] + 1)]
+    print(f"time_data_list shape: {np.array(time_data_list).shape}")
+    return pd.DataFrame(time_data_list, columns=column_names)
+    
 def generate_noise_data(base_data, num_samples=500, noise_strength_range=(0, 0.0025)):
     num_rows, num_cols = base_data.shape
 
@@ -39,6 +62,8 @@ def generate_noise_data(base_data, num_samples=500, noise_strength_range=(0, 0.0
 
     # ノイズを追加
     noised_data = np.clip(selected_rows + noises, -1, 1)
+
+    print(f"noised_data shape: {noised_data.shape}")
 
     return pd.DataFrame(noised_data, columns=base_data.columns)
 
@@ -59,6 +84,14 @@ def check_csv_data(file_path):
 
     print("全ての行の長さが一致しています。")
     
+async def generate_onnx_model_async(base_data_path):
+    loop = asyncio.get_running_loop()
+    # CPUバウンドタスクの実行には、デフォルトのexecutorをそのまま使用
+    onnx_file_path = await loop.run_in_executor(
+        None,  # Noneはデフォルトのexecutorを使用することを意味します
+        partial(generate_onnx_model, base_data_path)  # 引数を持つ関数のためのpartial適用
+    )
+    return onnx_file_path
 
 def generate_onnx_model(base_data_path):
 
@@ -73,21 +106,16 @@ def generate_onnx_model(base_data_path):
 
     # ノイズデータの生成を呼び出し
     noise_data = generate_noise_data(base_data, 500)
+    time_warped_data = generate_time_warped_data(base_data)
+
+    coloumn_names = [f'col{i}' for i in range(1, base_data.shape[1] + 1)]
+
+    base_data.columns = coloumn_names
+    noise_data.columns = coloumn_names
+    time_warped_data.columns = coloumn_names
     
-    for _ in range(600):  # タイムワーピングデータの生成
-        num_rows = base_data.shape[0]
-        random_row_index = np.random.randint(num_rows)
-        selected_row = base_data.iloc[random_row_index]
-        selected_data = selected_row.values.reshape(-1, 87)  # ここはデータ形状に応じて調整が必要かもしれません
-        warped_data = time_warping(selected_data).reshape(-1)
-        time_data_list.append(warped_data)
-
-    # データフレームに変換
-    noise_data = pd.DataFrame(noise_data_list, columns=base_data.columns)
-    time_data = pd.DataFrame(time_data_list, columns=base_data.columns[:-config.num_cols] + ['label'] * config.num_cols)  # 'label'は適宜調整
-
     # データの結合
-    combined_data = pd.concat([base_data, noise_data, time_data], ignore_index=True)
+    combined_data = pd.concat([base_data, noise_data, time_warped_data], ignore_index=True)
 
     x_finetune = combined_data.iloc[:, :-config.num_cols].values
     y_finetune = combined_data.iloc[:, -config.num_cols:].values
@@ -100,7 +128,7 @@ def generate_onnx_model(base_data_path):
     existing_model = keras.models.load_model(model_path)
 
     # 既存のモデルに新しい出力層を追加
-    new_output_layer = keras.layers.Dense(config.num_cols, activation='softmax', name='new_output')(existing_model.layers[-2].output)
+    new_output_layer = keras.layers.Dense(config.num_cols, activation='softmax', name='new_output_layer')(existing_model.layers[-2].output)
 
     # 新しいモデルを構築
     new_model = keras.models.Model(inputs=existing_model.input, outputs=new_output_layer)
@@ -119,7 +147,9 @@ def generate_onnx_model(base_data_path):
     # TensorFlowのモデルをONNX形式に変換
     spec, _ = tf2onnx.convert.from_keras(new_model, opset=13)
 
-    onnx_file_path = config.parent_dir + "/mocopiAI.onnx"
+    onnx_file_path = config.parent_dir + "/mocopiAITest.onnx"
 
     # 出力ファイルパスにONNXモデルを保存
     onnx.save_model(spec, onnx_file_path)
+
+    return onnx_file_path
