@@ -23,6 +23,7 @@ async def upload_csv(item: Item):
     # ここでファイルパスを用いて何らかの処理を行う
     print(f"Received file path: {file_path}")
     config.MocopiGameAIModel = await cm.train_and_evaluate_model_async(file_path)
+    restart_udp_server()  # UDPサーバーを再起動
     return {"message": "File received successfully"}
 
 @app.post("/reset/")
@@ -99,11 +100,5 @@ def restart_udp_server():
     print("UDP server restarted.")
 
 
-# UDPサーバーを別スレッドで起動する関数
-def run_udp_server():
-    threading.Thread(target=start_udp_server).start()
-
-
 if __name__ == "__main__":
-    run_udp_server()
     uvicorn.run(app, host="127.0.0.1", port=8000)
