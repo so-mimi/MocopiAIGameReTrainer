@@ -25,20 +25,34 @@ async def upload_csv(item: Item):
     config.MocopiGameAIModel = await cm.train_and_evaluate_model_async(file_path)
     return {"message": "File received successfully"}
 
+@app.post("/reset/")
+async def reset_system():
+    # ここでリセット処理を実行
+    print("Resetting system...")
+    # configやその他のグローバル変数のリセット処理をここに記述
+    reset_server_state()  # サーバーの状態をリセットする関数
+    return {"message": "System reset successfully"}
+
 class PredictItem(BaseModel):
     data: list[float]  # 推論に使用するデータのリスト
+
+
+class ResetCommand(BaseModel):
+    # 必要に応じてリセット処理に関するパラメータをここに定義
+    pass
 
 # UDPサーバー設定
 UDP_IP_ADDRESS = "127.0.0.1"
 UDP_PORT_NO = 6789
 
 def start_udp_server():
+    global running
+    running = True
     serverSock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     serverSock.bind((UDP_IP_ADDRESS, UDP_PORT_NO))
     print(f"UDP server up and listening at {UDP_IP_ADDRESS}:{UDP_PORT_NO}")
 
-    while True:
-        #5196では小さすぎたので制限を解除
+    while running:
         data, addr = serverSock.recvfrom(65535)
 
         try:
@@ -60,10 +74,35 @@ def start_udp_server():
             print(f"Prediction sent: {response} to {addr}")
         except Exception as e:
             print("An error occurred:", e)
+            if not running:
+                break 
+
+
+def reset_server_state():
+    global running
+    # サーバーの状態をリセットする処理を実装
+    print("Server state is being reset...")
+    # モデルを初期化など...
+    config.MocopiGameAIModel = None
+    print("Server state reset successfully.")
+    config.parent_dir = None
+    # UDPサーバーのループを終了させる
+    running = False
+
+
+def restart_udp_server():
+    global running
+    running = True  # サーバーの実行状態を再びTrueに設定
+    # UDPサーバースレッドを再起動
+    thread = threading.Thread(target=start_udp_server)
+    thread.start()
+    print("UDP server restarted.")
+
 
 # UDPサーバーを別スレッドで起動する関数
 def run_udp_server():
     threading.Thread(target=start_udp_server).start()
+
 
 if __name__ == "__main__":
     run_udp_server()
