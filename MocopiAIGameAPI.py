@@ -9,6 +9,8 @@ import os
 import socket
 import json
 import threading
+import tkinter as tk
+from tkinter import messagebox
 
 app = FastAPI()
 
@@ -101,4 +103,23 @@ def restart_udp_server():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    def run_server():
+        uvicorn.run(app, host="127.0.0.1", port=8000)
+
+    def on_start_server_button_click():
+        # サーバーを別スレッドで起動
+        threading.Thread(target=run_server, daemon=True).start()
+        messagebox.showinfo("Server", "Server is running...")
+        # ボタンを無効化
+        start_server_button.config(state=tk.DISABLED)
+
+    # tkinter GUI を設定
+    root = tk.Tk()
+    root.title("FastAPI Server Controller")
+    root.geometry("300x100")
+
+    start_server_button = tk.Button(root, text="Start Server", command=on_start_server_button_click)
+    start_server_button.pack(pady=20)
+
+    # GUIイベントループを開始
+    root.mainloop()
